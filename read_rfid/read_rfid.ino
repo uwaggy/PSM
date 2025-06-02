@@ -18,7 +18,7 @@ void setup(){
 }
 
 void loop(){
-    // Default authentication key
+    // Default authentication key (factory default)
     for (byte i = 0; i < 6; i++){
         key.keyByte[i] = 0xFF;
     }
@@ -27,7 +27,9 @@ void loop(){
     if (!mfrc522.PICC_ReadCardSerial()) return;
 
     Serial.println(F("Card detected!"));
-    
+
+    delay(150);  // Delay to stabilize communication
+
     String carPlate = readBlockData(2, "Car Plate");
     String balance  = readBlockData(4, "Balance");
 
@@ -42,38 +44,48 @@ void loop(){
 
     mfrc522.PICC_HaltA();
     mfrc522.PCD_StopCrypto1();
-    delay(2000); // wait before scanning again
+
+    delay(2000); // Wait before scanning next card
 }
 
 String readBlockData(byte blockNumber, String label){
-    byte buffer[18]; // 16 bytes of data + 2 bytes CRC
+    byte buffer[18]; // 16 bytes data + 2 bytes CRC
     byte bufferSize = sizeof(buffer);
 
-    // Authenticate
-    card_status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, blockNumber, &key, &(mfrc522.uid));
-    if (card_status != MFRC522::STATUS_OK) {
-        Serial.print("❌ Auth failed for ");
-        Serial.print(label);
-        Serial.print(": ");
-        Serial.println(mfrc522.GetStatusCodeName(card_status));
-        return "[Auth Fail]";
+    for (int attempt = 0; attempt < 2; attempt++) {
+        // Authenticate block
+        card_status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, blockNumber, &key, &(mfrc522.uid));
+        if (card_status != MFRC522::STATUS_OK) {
+            Serial.print(F("❌ Auth failed for "));
+            Serial.print(label);
+            Serial.print(F(": "));
+            Serial.println(mfrc522.GetStatusCodeName(card_status));
+            delay(100);
+            continue;  // Retry
+        }
+
+        // Read block data
+        card_status = mfrc522.MIFARE_Read(blockNumber, buffer, &bufferSize);
+        if (card_status != MFRC522::STATUS_OK) {
+            Serial.print(F("❌ Read failed for "));
+            Serial.print(label);
+            Serial.print(F(": "));
+            Serial.println(mfrc522.GetStatusCodeName(card_status));
+            delay(100);
+            continue;  // Retry
+        }
+
+        // Convert bytes to string and trim
+        String data = "";
+        for (uint8_t i = 0; i < 16; i++){
+            data += (char)buffer[i];
+        }
+        data.trim();
+        return data;  // Success
     }
 
-    // Read block
-    card_status = mfrc522.MIFARE_Read(blockNumber, buffer, &bufferSize);
-    if (card_status != MFRC522::STATUS_OK) {
-        Serial.print("❌ Read failed for ");
-        Serial.print(label);
-        Serial.print(": ");
-        Serial.println(mfrc522.GetStatusCodeName(card_status));
-        return "[Read Fail]";
-    }
-
-    // Convert to string
-    String data = "";
-    for (uint8_t i = 0; i < 16; i++){
-        data += (char)buffer[i];
-    }
-    data.trim(); // Remove extra padding
-    return data;
+    // After retries fail
+    Serial.print(F("❌ Failed to read "));
+    Serial.println(label);
+    return "[Read Fail]";
 }
